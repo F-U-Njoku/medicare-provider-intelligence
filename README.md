@@ -1,5 +1,5 @@
 # Medicare Provider Intelligence Hub
-![Project Architecture Diagram](architecture_w.png)
+![Project Architecture Diagram](/media/architecture_w.png)
 ### 🏥 Project Overview
 In the modern healthcare landscape, identifying cost outliers and provider inefficiencies is a multi-billion dollar challenge. This project implements a robust, end-to-end **Batch ETL Pipeline** designed to ingest, process, and analyze the **CMS Medicare Synthetic Public Use Files (SynPUF)**. 
 
