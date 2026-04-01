@@ -1,0 +1,5 @@
+project_id = ""
+region  = ""
+bucket_name = ""
+silver_dataset_name = ""
+gold_dataset_name = ""
