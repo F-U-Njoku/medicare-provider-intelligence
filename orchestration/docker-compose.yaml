@@ -23,8 +23,9 @@ x-airflow-common:
     AIRFLOW_VAR_GCP_REGION: ${GCP_REGION}
     AIRFLOW_VAR_SILVER_DATASET_NAME: ${SILVER_DATASET_NAME}
     AIRFLOW_VAR_GOLD_DATASET_NAME: ${GOLD_DATASET_NAME}
+    AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT: "google-cloud-platform://?key_path=%2fopt%2fairflow%2fgoogle%2fcredentials%2fgcp-creds.json&project_id=${GCP_PROJECT_ID}"
     # Python libraries for Airflow tasks
-    _PIP_ADDITIONAL_REQUIREMENTS: "google-cloud-storage requests"
+    _PIP_ADDITIONAL_REQUIREMENTS: "google-cloud-storage requests google-cloud-bigquery  dbt-bigquery"
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs

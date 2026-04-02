@@ -3,54 +3,69 @@ import io
 import zipfile
 import requests
 from datetime import datetime
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from google.cloud import storage
 
+from airflow import DAG
+from airflow.providers.standard.operators.python import PythonOperator
+from google.cloud import storage, bigquery
+
+# --- CONFIGURATION ---
 PROJECT_ID = os.getenv("AIRFLOW_VAR_GCP_PROJECT_ID")
 BUCKET_NAME = os.getenv("AIRFLOW_VAR_GCS_BUCKET")
+SILVER_DATASET_NAME = os.getenv("AIRFLOW_VAR_SILVER_DATASET_NAME")
 
 # CMS SynPUF Sample 1 (2008-2010)
-
-base_url_1 = "https://www.cms.gov/research-statistics-data-and-systems/downloadable-public-use-files/synpufs/downloads/de1_0_"
-base_url_2 = "https://www.cms.gov/research-statistics-data-and-systems/statistics-trends-and-reports/synpufs/downloads/de1_0_"
-base_url_3 = "http://downloads.cms.gov/files/DE1_0_"
+# Note: Keeping the corrected casing for path segments
+BASE_URL_WWW = "https://www.cms.gov/Research-Statistics-Data-and-Systems/Downloadable-Public-Use-Files/SynPUFs/Downloads/DE1_0_"
+BASE_URL_STATS = "https://www.cms.gov/Research-Statistics-Data-and-Systems/Statistics-Trends-and-Reports/SynPUFs/Downloads/DE1_0_"
+BASE_URL_FILES = "http://downloads.cms.gov/files/DE1_0_"
 
 DATA_SOURCES = [
-    {"type": "beneficiary", "year": "2008", "url": f"{base_url_1}2008_Beneficiary_Summary_File_Sample_1.zip"},
-    {"type": "beneficiary", "year": "2009", "url": f"{base_url_1}2009_Beneficiary_Summary_File_Sample_1.zip"},
-    {"type": "beneficiary", "year": "2010", "url": f"{base_url_2}2010_Beneficiary_Summary_File_Sample_20.zip"},
-    {"type": "inpatient", "year": "2008_2010", "url": f"{base_url_1}2008_to_2010_Inpatient_Claims_Sample_1.zip"},
-    {"type": "carrier", "year": "2008_2010_part_a", "url": f"{base_url_3}2008_to_2010_Carrier_Claims_Sample_1A.zip"},
-    {"type": "carrier", "year": "2008_2010_part_b", "url": f"{base_url_3}2008_to_2010_Carrier_Claims_Sample_1B.zip"},
+    {"type": "beneficiary", "year": "2008", "url": f"{BASE_URL_WWW}2008_Beneficiary_Summary_File_Sample_1.zip"},
+    {"type": "beneficiary", "year": "2009", "url": f"{BASE_URL_WWW}2009_Beneficiary_Summary_File_Sample_1.zip"},
+    {"type": "beneficiary", "year": "2010", "url": f"{BASE_URL_STATS}2010_Beneficiary_Summary_File_Sample_20.zip"},
+    {"type": "inpatient", "year": "2008_2010", "url": f"{BASE_URL_WWW}2008_to_2010_Inpatient_Claims_Sample_1.zip"},
+    {"type": "carrier", "year": "2008_2010_part_a", "url": f"{BASE_URL_FILES}2008_to_2010_Carrier_Claims_Sample_1A.zip"},
+    {"type": "carrier", "year": "2008_2010_part_b", "url": f"{BASE_URL_FILES}2008_to_2010_Carrier_Claims_Sample_1B.zip"},
 ]
 
+# --- HELPER FUNCTIONS ---
 def download_and_extract(file_type, year, url):
     """Downloads zip, extracts the CSV, and streams it to GCS."""
     print(f"Downloading {file_type} ({year}) from {url}...")
-    
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    # Use stream=True to avoid loading the whole zip into memory if possible
     with requests.get(url, headers=headers, stream=True) as response:
         if response.status_code != 200:
             raise Exception(f"Failed to download. Status: {response.status_code}")
         
-        # ZipFile still needs a seekable object, so we use BytesIO for the zip itself
         with zipfile.ZipFile(io.BytesIO(response.content)) as z:
             for filename in z.namelist():
                 if filename.endswith('.csv'):
                     with z.open(filename) as f:
-                        # SET UP GCS CLIENT
                         client = storage.Client()
                         bucket = client.bucket(BUCKET_NAME)
                         dest_path = f"bronze/{file_type}/{file_type}_{year}.csv"
                         blob = bucket.blob(dest_path)
-                        
-                        # upload_from_file is much more memory efficient than upload_from_string
+                        # Memory efficient streaming upload
                         blob.upload_from_file(f, content_type='text/csv')
-                        print(f"✅ Success: Saved as {dest_path}")
+                        print(f"✅ Success: Saved to gs://{BUCKET_NAME}/{dest_path}")
 
+def create_external_table(project_id, dataset_id, table_id, bucket_name, gcs_path):
+    """Creates a BigQuery external table over a GCS CSV file with autodetect."""
+    client = bigquery.Client(project=project_id)
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+
+    ext_config = bigquery.ExternalConfig("CSV")
+    ext_config.source_uris = [f"gs://{bucket_name}/{gcs_path}"]
+    ext_config.autodetect = True
+    ext_config.csv_options.skip_leading_rows = 1
+
+    table = bigquery.Table(table_ref)
+    table.external_data_configuration = ext_config
+    client.create_table(table, exists_ok=True)
+    print(f"✅ External table {table_ref} created/updated.")
+
+# --- DAG DEFINITION ---
 default_args = {
     'owner': 'airflow',
     'start_date': datetime(2025, 1, 1),
@@ -58,20 +73,41 @@ default_args = {
 }
 
 with DAG(
-    dag_id="medicare_bronze_ingestion_v2",
+    dag_id="medicare_bronze_to_silver",
     default_args=default_args,
     schedule="@once",
     catchup=False,
-    tags=['medicare', 'bronze']
+    tags=['medicare', 'bronze', 'silver']
 ) as dag:
 
+    # Synthesize tasks in a single loop for cleaner logic
     for entry in DATA_SOURCES:
-        PythonOperator(
-            task_id=f"ingest_{entry['type']}_{entry['year']}",
+        f_type = entry['type']
+        f_year = entry['year']
+        f_url = entry['url']
+        
+        # 1. Ingestion Task (Python)
+        ingest_task = PythonOperator(
+            task_id=f"ingest_{f_type}_{f_year}",
             python_callable=download_and_extract,
+            op_kwargs={'file_type': f_type, 'year': f_year, 'url': f_url}
+        )
+
+        # 2. External Table Task (BigQuery)
+        table_id = f"ext_{f_type}_{f_year}"
+        gcs_path = f"bronze/{f_type}/{f_type}_{f_year}.csv"
+
+        create_ext_table = PythonOperator(
+            task_id=f"create_table_{table_id}",
+            python_callable=create_external_table,
             op_kwargs={
-                'file_type': entry['type'], 
-                'year': entry['year'], 
-                'url': entry['url']
+                'project_id': PROJECT_ID,
+                'dataset_id': SILVER_DATASET_NAME,
+                'table_id': table_id,
+                'bucket_name': BUCKET_NAME,
+                'gcs_path': gcs_path,
             }
         )
+
+        # 3. Link them: Ingest must complete before Table is created
+        ingest_task >> create_ext_table
