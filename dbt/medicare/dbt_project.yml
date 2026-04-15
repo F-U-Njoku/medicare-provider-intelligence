@@ -31,6 +31,12 @@ clean-targets:         # directories to be removed by `dbt clean`
 # files using the `{{ config(...) }}` macro.
 models:
   medicare:
-    # Config indicated by + and applies to all files under models/example/
-    example:
+    staging:
+      +schema: medicare_silver
       +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      +schema: medicare_gold
+      +materialized: table
+    

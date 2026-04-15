@@ -10,8 +10,8 @@ terraform {
 
 provider "google" {
   credentials = file("../gcp-creds.json")
-  project = var.project_id
-  region  = var.region
+  project     = var.project_id
+  region      = var.region
 }
 
 # 1. BRONZE LAYER: The Data Lake (GCS)
@@ -31,9 +31,15 @@ resource "google_storage_bucket" "bronze_bucket" {
   }
 }
 
+resource "google_bigquery_dataset" "bronze_medicare" {
+  dataset_id = var.bronze_dataset_name
+  project    = var.project_id
+  location   = var.region
+}
+
 # 2. SILVER LAYER: Staging Dataset (BigQuery)
 # This is where dbt will clean the raw data
-resource "google_bigquery_dataset" "silver_medicare_stg" {
+resource "google_bigquery_dataset" "silver_medicare" {
   dataset_id = var.silver_dataset_name
   project    = var.project_id
   location   = var.region
@@ -41,7 +47,7 @@ resource "google_bigquery_dataset" "silver_medicare_stg" {
 
 # 3. GOLD LAYER: Production/Marts Dataset (BigQuery)
 # This is what Looker Studio will connect to
-resource "google_bigquery_dataset" "gold_medicare_marts" {
+resource "google_bigquery_dataset" "gold_medicare" {
   dataset_id = var.gold_dataset_name
   project    = var.project_id
   location   = var.region

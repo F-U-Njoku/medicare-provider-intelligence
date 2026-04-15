@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: fct_medical_claims
+    description: "The primary fact table for Medicare claims analysis."
+    columns:
+      - name: medical_claim_pk
+        tests:
+          - unique
+          - not_null
+      - name: medicare_payment_amt
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: -10000.0
+              inclusive: true

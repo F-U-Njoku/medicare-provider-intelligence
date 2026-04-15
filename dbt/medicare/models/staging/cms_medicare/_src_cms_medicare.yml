@@ -1,0 +1,22 @@
+version: 2
+
+sources:
+  - name: cms_medicare
+    description: "Raw Medicare data sourced from CMS.gov, stored in a GCS bucket and accessible via BigQuery external tables."
+    database: zoomca
+    schema: medicare_bronze
+    tables:
+      - name: ext_beneficiary_2008
+        description: "Inpatient claims data from Medicare."
+        
+      - name: ext_beneficiary_2009
+        description: "Inpatient claims data from Medicare for the year 2009."
+        
+      - name: ext_beneficiary_2010
+        description: "Inpatient claims data from Medicare for the year 2010."
+
+      - name: ext_carrier_2008_2010_part_a
+
+      - name: ext_carrier_2008_2010_part_b
+
+      - name: ext_inpatient_2008_2010 

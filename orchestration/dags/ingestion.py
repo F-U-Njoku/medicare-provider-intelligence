@@ -2,16 +2,27 @@ import os
 import io
 import zipfile
 import requests
-from datetime import datetime
-
 from airflow import DAG
+from pathlib import Path
+from datetime import datetime
 from airflow.providers.standard.operators.python import PythonOperator
-from google.cloud import storage, bigquery
+from cosmos.profiles import GoogleCloudServiceAccountDictProfileMapping
+from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, RenderConfig
 
 # --- CONFIGURATION ---
 PROJECT_ID = os.getenv("AIRFLOW_VAR_GCP_PROJECT_ID")
 BUCKET_NAME = os.getenv("AIRFLOW_VAR_GCS_BUCKET")
-SILVER_DATASET_NAME = os.getenv("AIRFLOW_VAR_SILVER_DATASET_NAME")
+BRONZE_DATASET_NAME = os.getenv("AIRFLOW_VAR_BRONZE_DATASET_NAME")
+DBT_PROJECT_PATH = Path("/opt/airflow/dbt/medicare")
+
+profile_config = ProfileConfig(
+    profile_name="medicare",
+    target_name="dev",
+    profile_mapping=GoogleCloudServiceAccountDictProfileMapping(
+        conn_id="db_bq_conn",
+        profile_args={"dataset": "medicare_silver"},
+    ),
+)
 
 # CMS SynPUF Sample 1 (2008-2010)
 # Note: Keeping the corrected casing for path segments
@@ -31,6 +42,7 @@ DATA_SOURCES = [
 # --- HELPER FUNCTIONS ---
 def download_and_extract(file_type, year, url):
     """Downloads zip, extracts the CSV, and streams it to GCS."""
+    from google.cloud import storage  
     print(f"Downloading {file_type} ({year}) from {url}...")
     headers = {'User-Agent': 'Mozilla/5.0'}
     
@@ -46,12 +58,16 @@ def download_and_extract(file_type, year, url):
                         bucket = client.bucket(BUCKET_NAME)
                         dest_path = f"bronze/{file_type}/{file_type}_{year}.csv"
                         blob = bucket.blob(dest_path)
+                        if blob.exists():
+                             print(f"⏭️ Skipping: gs://{BUCKET_NAME}/{dest_path} already exists.")
+                             return
                         # Memory efficient streaming upload
                         blob.upload_from_file(f, content_type='text/csv')
                         print(f"✅ Success: Saved to gs://{BUCKET_NAME}/{dest_path}")
 
 def create_external_table(project_id, dataset_id, table_id, bucket_name, gcs_path):
     """Creates a BigQuery external table over a GCS CSV file with autodetect."""
+    from google.cloud import bigquery 
     client = bigquery.Client(project=project_id)
     table_ref = f"{project_id}.{dataset_id}.{table_id}"
 
@@ -73,12 +89,21 @@ default_args = {
 }
 
 with DAG(
-    dag_id="medicare_bronze_to_silver",
+    dag_id="medicare_pipeline",
     default_args=default_args,
     schedule="@once",
     catchup=False,
-    tags=['medicare', 'bronze', 'silver']
+    tags=['medicare', 'ingestion', 'transformation'],
 ) as dag:
+
+    transform_data = DbtTaskGroup(
+        group_id="transform_medicare_data",
+        project_config=ProjectConfig(DBT_PROJECT_PATH),
+        profile_config=profile_config,
+        render_config=RenderConfig(
+            select=["path:models/staging", "path:models/marts"]
+        )
+    )
 
     # Synthesize tasks in a single loop for cleaner logic
     for entry in DATA_SOURCES:
@@ -102,12 +127,12 @@ with DAG(
             python_callable=create_external_table,
             op_kwargs={
                 'project_id': PROJECT_ID,
-                'dataset_id': SILVER_DATASET_NAME,
+                'dataset_id': BRONZE_DATASET_NAME,
                 'table_id': table_id,
                 'bucket_name': BUCKET_NAME,
                 'gcs_path': gcs_path,
             }
         )
 
-        # 3. Link them: Ingest must complete before Table is created
-        ingest_task >> create_ext_table
+        # 3. Link: Ingest -> External Table -> dbt transformation
+        ingest_task >> create_ext_table >> transform_data

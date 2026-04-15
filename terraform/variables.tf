@@ -18,12 +18,17 @@ variable "bucket_name" {
   type        = string
 }
 
+variable "bronze_dataset_name" {
+  description = "The name of the bronze dataset"
+  type        = string
+}
+
 variable "silver_dataset_name" {
-  description = "The name of the GCS bucket (must be unique)"
+  description = "The name of the silver dataset"
   type        = string
 }
 
 variable "gold_dataset_name" {
-  description = "The name of the GCS bucket (must be unique)"
+  description = "The name of the gold dataset"
   type        = string
 }
