@@ -1,0 +1,7 @@
+version: 2
+
+seeds:
+  - name: icd9_codes
+    description: "ICD-9 diagnosis codes and descriptions"
+    config:
+      delimiter: ";"
