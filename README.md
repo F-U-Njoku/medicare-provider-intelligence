@@ -150,7 +150,7 @@ The final `fct_medical_claims` table was connected to **Looker Studio** to answe
 
 [![Medicare Dashboard](media/looker.gif)](https://datastudio.google.com/s/r_3pSPVoPl8)
 
-<span style="color:green">**Click on the above GIF to visit dashboard.**</span>
+[![View Live Dashboard](https://img.shields.io/badge/View%20Live%20Dashboard-▶-brightgreen?style=for-the-badge)](https://datastudio.google.com/s/r_3pSPVoPl8)
 
 | Question | Visualization | Insight |
 | :--- | :--- | :--- |
